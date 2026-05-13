@@ -1,7 +1,7 @@
 ---
 name: church-event-planner
-version: 1.0.0
-description: Plan and manage church events from start to finish, including timelines, task checklists, vendors, and volunteer coordination. Use this skill whenever someone mentions planning a church event, gathering, retreat, VBS, potluck, fundraiser, conference, special service, wedding, funeral, community outreach, or any ministry event. Trigger on casual phrases too -- "we need to start planning Easter," "who's handling VBS this year," "I need a caterer for the banquet," "can you help me think through this event," or "what still needs to get done for Sunday" should all activate this skill.
+version: "1.1.0"
+description: "Plan and manage church events from start to finish with church-specific intelligence: ministry team coordination, volunteer rotation tracking, sermon series alignment, and liturgical calendar awareness. Use this skill whenever someone mentions planning a church event, gathering, retreat, VBS, potluck, fundraiser, conference, special service, wedding, funeral, community outreach, ministry team scheduling, or any ministry event. Trigger on casual phrases too: 'we need to start planning Easter,' 'who's handling VBS this year,' 'I need a caterer for the banquet,' 'who's on greeter rotation Sunday,' 'is Sarah getting burned out,' 'what's coming up in Lent,' 'can the worship team handle this,' 'tie this to the current sermon series,' 'can you help me think through this event,' or 'what still needs to get done for Sunday' should all activate this skill."
 metadata:
   openclaw:
     emoji: ⛪
@@ -69,6 +69,52 @@ All event data is stored in a structured JSON file called `event-data.json` in t
       "eventsUsed": ["event-id"]
     }
   ],
+  "ministryTeams": [
+    {
+      "id": "team-id",
+      "name": "Worship Team",
+      "leadName": "Mike Roberts",
+      "leadContact": "555-222-3333",
+      "members": ["volunteer-id-1", "volunteer-id-2"],
+      "ownsEvents": ["event-id"],
+      "notes": "Rotates every other Sunday"
+    }
+  ],
+  "volunteerRoster": [
+    {
+      "id": "vol-id",
+      "name": "Sarah Johnson",
+      "contact": "555-111-2222",
+      "skills": ["snacks", "childcare"],
+      "teams": ["team-id"],
+      "blackoutDates": ["2026-07-01", "2026-07-08"],
+      "preferences": "Mornings only. Allergic to nuts (relevant for snack roles).",
+      "recentAssignments": [
+        {"event": "VBS 2026", "role": "Snack coordinator", "date": "2026-06-15"}
+      ],
+      "burnoutScore": 2
+    }
+  ],
+  "sermonSeries": [
+    {
+      "id": "series-id",
+      "title": "Sermons in the Hills",
+      "startDate": "2026-04-05",
+      "endDate": "2026-05-31",
+      "weeks": [
+        {"date": "2026-04-05", "passage": "Matthew 5:1-12", "topic": "The Beatitudes"}
+      ],
+      "linkedEvents": ["event-id"]
+    }
+  ],
+  "liturgicalYear": {
+    "tradition": "general-protestant",
+    "currentSeason": "Lent",
+    "upcomingDates": [
+      {"date": "2026-04-05", "label": "Easter Sunday"},
+      {"date": "2026-05-24", "label": "Pentecost"}
+    ]
+  },
   "templates": {}
 }
 ```
@@ -117,7 +163,7 @@ Fields:
 - **Notes** (pricing, quality, reliability)
 - **Events used** (automatically linked from event records)
 
-### 4. Volunteers
+### 4. Volunteers (per-event assignments)
 Tracked per event. Each volunteer entry is event-specific (same person can have different roles across events).
 
 Fields:
@@ -125,6 +171,46 @@ Fields:
 - **Role** (what they're doing for this event)
 - **Contact info** (if provided)
 - **Confirmed** (yes/no)
+
+### 5. Volunteer Roster (master directory)
+A reusable master list of every volunteer across all events. The per-event entries above link back to this roster.
+
+Fields:
+- **Name and contact**
+- **Skills** (snacks, music, childcare, AV, hospitality, teaching, decor, setup, etc.)
+- **Team memberships** (linked ministry teams; see below)
+- **Blackout dates** (when they're unavailable; surface during scheduling)
+- **Preferences and constraints** (mornings only, allergies relevant to roles, can't lift heavy)
+- **Recent assignments** (rolling history of the last 8-10 things they've helped with, used for burnout detection)
+- **Burnout score** (auto-calculated based on assignment count and density over the trailing 60 days; see Burnout Detection below)
+
+### 6. Ministry Teams
+Recurring teams that own categories of work across many events. A team has a lead, a roster, and a list of events it owns.
+
+Common teams: Worship, Greeters, Ushers, Nursery, Children's Ministry, Youth, AV/Tech, Hospitality, Missions, Prayer.
+
+Fields:
+- **Team name and lead**
+- **Lead contact**
+- **Member roster** (linked to Volunteer Roster)
+- **Owned events** (events the team is responsible for; e.g., Worship owns every Sunday service)
+- **Notes** (rotation pattern, meeting cadence, internal norms)
+
+### 7. Sermon Series
+Active and historical sermon series, used to align events with the broader teaching arc.
+
+Fields:
+- **Series title** and date range
+- **Weekly breakdown** (date, passage, topic)
+- **Linked events** (e.g., a small-group dinner series tied to the sermon series, or an outreach event themed around a particular week)
+
+### 8. Liturgical Calendar
+A simple awareness layer for the church year, used to prompt for typical seasonal events.
+
+Fields:
+- **Tradition** (general-protestant, anglican, lutheran, catholic, none/non-traditional — affects which dates surface)
+- **Current season** (Advent, Christmas, Epiphany, Lent, Holy Week, Easter, Pentecost, Ordinary Time)
+- **Upcoming dates** (Ash Wednesday, Maundy Thursday, Good Friday, Easter, Ascension, Pentecost, All Saints, Christ the King, Advent Sundays, Christmas Eve, etc.)
 
 ---
 
@@ -233,6 +319,108 @@ You have built-in planning templates for common church events. When a user start
 - Present it as: "Here's a starting checklist based on a typical [event type]. Want me to load this up, or do you want to customize it first?"
 - Once accepted, create the event and populate the task list with due dates calculated backward from the event date.
 - The user can add, remove, or modify any tasks after loading.
+
+---
+
+## Volunteer Rotation & Burnout Detection
+
+Church volunteers are mostly the same people across many events. Treat them as a shared resource with finite capacity.
+
+### Rotation tracking
+
+When assigning volunteers to a new event:
+
+1. Pull the master Volunteer Roster
+2. Check each candidate's `blackoutDates` against the event date
+3. Pull each candidate's `recentAssignments` and compute density (how many events in the last 60 days, and how many of those are upcoming-but-incomplete)
+4. Surface a ranked suggestion: who's available, who's lightly loaded, who's leaning toward overcommitment
+5. Filter by the role's required skills (no volunteers without "childcare" experience for the nursery role, etc.)
+
+### Burnout score
+
+Each volunteer carries a `burnoutScore` from 0-5. Auto-calculate it as:
+
+- 0-1: Helping with 0-1 things in the trailing 60 days. Plenty of capacity.
+- 2: Helping with 2-3 things. Healthy.
+- 3: Helping with 4-5 things. Watch.
+- 4: Helping with 6+ things, or back-to-back weekends. Approaching burnout.
+- 5: Has explicitly said "I need a break" or has missed/canceled recently. Do not assign.
+
+When the operator tries to assign someone with a burnout score of 4+, surface a gentle warning before confirming: "Sarah is at burnout score 4 (she's on 6 things in the last 8 weeks). Want me to suggest someone else with similar skills?"
+
+### Recurring role scheduling
+
+For teams with predictable rotations (greeters every Sunday, nursery weekly), maintain the rotation pattern. When the operator asks "who's on greeter rotation this Sunday," check the pattern and surface the scheduled team, flag any blackout conflicts, and suggest substitutes from the master roster.
+
+---
+
+## Ministry Team Coordination
+
+Most church events are owned by a ministry team, not a single individual.
+
+### Linking events to teams
+
+When creating an event, ask which team owns it (Worship, Children's, Hospitality, etc.). The event's primary contact defaults to that team's lead. The event inherits the team's known members as default volunteer candidates.
+
+### Team-level views
+
+When the operator asks about a team ("what does the children's ministry team have on their plate?"), respond with:
+
+- Events the team owns over the next 60 days, sorted by date
+- Open tasks across those events
+- Team members' aggregate burnout scores
+- Anything the team lead specifically should know (missing volunteer slots, looming deadlines)
+
+### Team handoffs
+
+When ownership of an event shifts mid-planning (the Hospitality team takes over the Christmas reception from Worship, say), preserve the planning history and update the team link cleanly. Note the handoff date in the event's notes.
+
+---
+
+## Sermon Series Alignment
+
+Events often work better when they tie into what's being preached.
+
+### When to surface the connection
+
+- A user creates an event in the date range of an active sermon series → suggest the connection: "This falls during the 'Sermons in the Hills' series (April 5 - May 31). Want me to link them so we can theme the event around the week's passage?"
+- A user explicitly mentions tying an event to the series ("can we make this small group dinner align with the sermon?") → use the week's passage and topic to suggest themes, discussion questions, or visual elements
+- Series planning is happening → offer to schedule supporting events (kickoff dinner, midweek small groups, closing celebration)
+
+### What you produce
+
+If asked for series-aligned content, generate:
+- A short event theme that ties to the week's topic
+- 2-3 discussion or reflection questions if it's a small-group setting
+- A one-line promotional blurb that mentions the series
+
+---
+
+## Liturgical Calendar Intelligence
+
+The church year follows a predictable rhythm. Use it to surface what's coming and what's typical.
+
+### Surface upcoming dates proactively
+
+When the operator opens the skill or asks "what's coming up," include any liturgical dates in the next 8 weeks. Examples:
+- "Ash Wednesday is February 18. Typical churches your size start planning a service 3-4 weeks out. Want to scaffold one?"
+- "Holy Week starts March 28. Most churches plan: Palm Sunday service, Maundy Thursday service, Good Friday service, Easter Vigil (optional), Easter Sunday. Want to set those up as a linked series of events?"
+
+### Respect tradition setting
+
+The `tradition` field in `liturgicalYear` determines what surfaces. A general-protestant config surfaces Holy Week, Pentecost, and Advent but skips minor feasts. An anglican config surfaces more. A `none` config disables liturgical prompts entirely.
+
+### Seasonal common events
+
+Each liturgical season has typical events. Suggest them when entering a new season:
+
+- **Advent**: Hanging of the Greens, Advent Vespers, Christmas Eve service(s), candlelight service
+- **Lent**: Ash Wednesday, Lenten devotional/small group series, Maundy Thursday, Good Friday, Easter Vigil
+- **Easter season**: Sunrise service, Easter brunch, Pentecost celebration
+- **Ordinary Time**: VBS, mission trips, fall kickoff, harvest events, Reformation Sunday, All Saints, Thanksgiving service
+- **Christ the King to Advent**: Year-end giving push, Thanksgiving outreach, Advent calendar prep
+
+Never push religious traditions on the user; just surface what their `tradition` config implies and let them ignore what's not relevant.
 
 ---
 
